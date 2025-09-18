@@ -1,3 +1,7 @@
+input_dir <- "1_Specified_lambda"
+input_dir <- "2_Auto_lambda"
+
+# 람다 별 BIC 그래프 그리기 
 lambda_seq <- lambda_list$hub
 exclude_idx <- c(33, 38, 44)
 
@@ -6,47 +10,53 @@ for (type in unique(data_types)) {
     
     test_bic.U <- test_bic.V <- rep(NA, length(lambda_seq))
     
-    # ---- U 처리 ----
-    load(sprintf("./%s_result/data%02d_result.U.RData", type, idx))
-    for (i in seq_along(lambda_seq)) {
-      l <- lambda_seq[i]
-      test_bic.U[i] <- compute_BIC(
-        sim_result_U[[as.character(l)]]$rho,
-        sim_result_U[[as.character(l)]]$E
-      )
+    for (label in c("U", "V")) {
+      # lambda 불러오기
+      lambda_seq <- if (label == "U") lambda_list.Y_t[[type]][, idx] else lambda_list.Y[[type]][, idx]
+      
+      # 결과 벡터 초기화
+      bic_name <- sprintf("test_bic.%s", label)
+      assign(bic_name, numeric(length(lambda_seq)))
+      
+      # 데이터 로드
+      load(sprintf("./%s/%s_result/data%02d_result.%s.RData", input_dir, type, idx, label))
+      
+      # sim_result 객체 이름 만들기 (sim_result_U / sim_result_V)
+      sim_name <- sprintf("sim_result_%s", label)
+      sim_result <- get(sim_name)
+      
+      # BIC 계산
+      for (i in seq_along(lambda_seq)) {
+        l <- lambda_seq[i]
+        tmp <- compute_BIC(
+          sim_result[[as.character(l)]]$rho,
+          sim_result[[as.character(l)]]$E
+        )
+        # test_bic.U[i] or test_bic.V[i] 에 저장
+        bic_vec <- get(bic_name)
+        bic_vec[i] <- tmp
+        assign(bic_name, bic_vec)
+      }
+      
+      # 저장
+      save_path <- sprintf("./%s/%s_bic/data%02d.%s.RData", input_dir, type, idx, label)
+      save(list = bic_name, file = save_path)
     }
-    
-    # ---- V 처리 ----
-    load(sprintf("./%s_result/data%02d_result.V.RData", type, idx))
-    for (i in seq_along(lambda_seq)) {
-      l <- lambda_seq[i]
-      test_bic.V[i] <- compute_BIC(
-        sim_result_V[[as.character(l)]]$rho,
-        sim_result_V[[as.character(l)]]$E
-      )
-    }
-    
-    # ---- 결과 저장 ----
-    save_path_U <- sprintf("./%s_bic/data%02d.U.RData", type, idx)
-    save(test_bic.U, file = save_path_U)
-    
-    save_path_V <- sprintf("./%s_bic/data%02d.V.RData", type, idx)
-    save(test_bic.V, file = save_path_V)
-    
-    # ---- 로그 ----
-    cat(sprintf("Finish calculating: idx=%02d, type=%s\n", idx, type))
+    cat(sprintf("Finish calculating BIC: %s %s\n", type, idx))
   }
 }
 
 
 
 
-bic_min_idx <- list()
 
-for (type in unique(task_list$type)) {
-  out_dir <- sprintf("./%s_bic", type)
-  if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
-  
+##############################################################
+# lambda 별 BIC 계산 및 최소점 찾기
+
+v <- list()
+bic_min_idx.lambda2 <- list()
+
+for (type in unique(data_types)) {
   bic_min_idx[[type]] <- data.frame(data = integer(),
                                     U_min_idx = integer(),
                                     V_min_idx = integer(),
@@ -54,49 +64,45 @@ for (type in unique(task_list$type)) {
                                     V_min_lambda = numeric())
   
   for (idx in setdiff(1:50, exclude_idx)) {
+    min_idx_list <- list()
+    min_lambda_list <- list()
     
-    ## --- U ---
-    load(sprintf("./%s_bic/data%02d.U.RData", type, idx))  # loads test_bic.U
-    min_idx_U <- which.min(test_bic.U)
-    min_lambda_U <- lambda_seq[min_idx_U]
-    
-    png(sprintf("./%s_bic/data%02d.U.png", type, idx),
-        width = 1200, height = 800, res = 150)
-    plot(log(lambda_seq), test_bic.U, type = "l", lwd = 2,
-         xlab = "lambda", ylab = "BIC (U)",
-         main = sprintf("%s | data%02d (U)", type, idx))
-    points(log(lambda_seq[which.min(test_bic.U)]), min(test_bic.U), col = "blue", pch = 19)
-    dev.off()
-    
-    ## --- V ---
-    load(sprintf("./%s_bic/data%02d.V.RData", type, idx))  # loads test_bic.V
-    min_idx_V <- which.min(test_bic.V)
-    min_lambda_V <- lambda_seq[min_idx_V]
-    
-    png(sprintf("./%s_bic/data%02d.V.png", type, idx),
-        width = 1200, height = 800, res = 150)
-    plot(log(lambda_seq), test_bic.V, type = "l", lwd = 2,
-         xlab = "lambda", ylab = "BIC (V)",
-         main = sprintf("%s | data%02d (V)", type, idx))
-    points(log(lambda_seq[which.min(test_bic.V)]), min(test_bic.V), col = "blue", pch = 19)
-    dev.off()
-    
-    # --- 결과 저장 ---
-    bic_min_idx[[type]] <- rbind(
-      bic_min_idx[[type]],
+    for (label in c("U", "V")) {
+      # lambda 불러오기
+      lambda_seq <- if (label == "U") lambda_list.Y_t[[type]][, idx] else lambda_list.Y[[type]][, idx]
+      
+      load(sprintf("./%s/%s_bic/data%02d.%s.RData", input_dir, type, idx, label))  # loads test_bic.U
+      bic_vec <- get(sprintf("test_bic.%s", label))
+      
+      # 최소값 찾기
+      min_idx <- which.min(bic_vec)
+      min_lambda <- lambda_seq[min_idx]
+      min_idx_list[[label]] <- min_idx
+      min_lambda_list[[label]] <- min_lambda
+      
+      png(sprintf("./%s/%s_bic/data%02d.%s.png", input_dir, type, idx, label),
+          width = 1200, height = 800, res = 150)
+      plot(log(lambda_seq), bic_vec, type = "l", lwd = 2,
+           xlab = "lambda", ylab = sprintf("BIC (%s)", label),
+           main = sprintf("%s | data%02d (%s)", type, idx, label))
+      points(log(lambda_seq[min_idx]), min(bic_vec), col = "blue", pch = 19)
+      dev.off()
+    }
+    bic_min_idx.lambda2[[type]] <- rbind(
+      bic_min_idx.lambda2[[type]],
       data.frame(data = idx,
-                 U_min_idx = min_idx_U,
-                 V_min_idx = min_idx_V,
-                 U_min_lambda = min_lambda_U,
-                 V_min_lambda = min_lambda_V)
+                 U_min_idx = min_idx_list$U,
+                 V_min_idx = min_idx_list$V,
+                 U_min_lambda = min_lambda_list$U,
+                 V_min_lambda = min_lambda_list$V)
     )
-    
-    cat(sprintf("Saved plots: %s data%02d\n", type, idx))
+      
+    # 저장
+    save_path <- sprintf("./%s/%s_bic/data%02d.%s.RData", input_dir, type, idx, label)
+    save(list = bic_name, file = save_path)
   }
+  cat(sprintf("Finish calculating BIC: %s %s\n", type, idx))
 }
-
-
-
 
 
 
@@ -104,100 +110,129 @@ for (type in unique(task_list$type)) {
 
 ##############################
 # Draw ROC curve
-compute_tpr_fpr <- function(rho_hat, rho_true) {
-  upper_idx <- upper.tri(rho_true)
-  
-  edge_true <- abs(rho_true[upper_idx]) > 1e-12
-  edge_hat  <- abs(rho_hat[upper_idx])  > 0   # 완전 0만 제거
-  
-  TP <- sum(edge_true & edge_hat)
-  FP <- sum(!edge_true & edge_hat)
-  TN <- sum(!edge_true & !edge_hat)
-  FN <- sum(edge_true & !edge_hat)
-  
-  TPR <- ifelse(TP + FN > 0, TP / (TP + FN), 0)
-  FPR <- ifelse(FP + TN > 0, FP / (FP + TN), 0)
-  
-  return(c(TPR = TPR, FPR = FPR))
-}
 
-
-
-load(sprintf("./%s_result/data%02d_result.V.RData", 'hub', 23))
-load(sprintf("./%s_bic/data%02d.V.RData", 'hub', 23))  # test_bic.U
-for (i in 1:20) {
-  print(compute_tpr_fpr(sim_result_V[[i]]$rho, result$V))
-}
-
-
-
-library(pROC)   # AUC 계산 편리
+library(pROC)
 
 plot_roc <- function(sim_result, rho_true, lambda_seq, main_title, out_file, test_bic) {
-  tpr <- fpr <- rep(NA, length(lambda_seq))
+  upper_idx <- upper.tri(rho_true)
+  edge_true <- as.numeric(abs(rho_true[upper_idx]) > 1e-12)  # 0/1 벡터
   
-  for (i in seq_along(lambda_seq)) {
-    l <- lambda_seq[i]
-    rho_hat <- sim_result[[as.character(l)]]$rho
-    vals <- compute_tpr_fpr(rho_hat, rho_true)
-    tpr[i] <- vals["TPR"]
-    fpr[i] <- vals["FPR"]
-  }
-  
-  # --- 정렬용 (플롯/auc 계산) ---
-  ord <- order(fpr, tpr)
-  fpr_plot <- c(0, fpr[ord], 1)
-  tpr_plot <- c(0, tpr[ord], 1)
-  
-  # --- trapezoidal AUC ---
-  auc_val <- sum(diff(fpr_plot) * (head(tpr_plot, -1) + tail(tpr_plot, -1)) / 2)
+  auc_val <- NA
   
   # --- BIC 최소 지점 ---
   min_idx <- which.min(test_bic)
   best_lambda <- lambda_seq[min_idx]
   rho_best <- sim_result[[as.character(best_lambda)]]$rho
-  best_vals <- compute_tpr_fpr(rho_best, rho_true)
+  
+  # predictor: 절대값을 score로 사용 (0일수록 연결 없음, 클수록 edge 강함)
+  predictor <- abs(rho_best[upper_idx])
+  
+  roc_obj <- roc(response = edge_true, predictor = predictor, quiet = TRUE)
+  auc_val <- as.numeric(auc(roc_obj))
   
   # --- 그리기 ---
   png(out_file, width=1200, height=800, res=150)
-  plot(fpr_plot, tpr_plot, type="b", lwd=2, pch=19,
-       xlab="False Positive Rate", ylab="True Positive Rate",
-       main=sprintf("%s (AUC=%.3f)", main_title, auc_val))
-  abline(0,1,col="grey",lty=2)
-  points(best_vals["FPR"], best_vals["TPR"], col="blue", pch=19, cex=1.5)
+  plot(roc_obj, main = sprintf("%s (AUC=%.3f)", main_title, auc_val),
+       col = "black", lwd = 2)
   dev.off()
   
   return(auc_val)
 }
 
 
+
 exclude_idx <- c(33, 38, 44)
+auc_list.lambda1 <- list(
+  hub     = list(U = numeric(), V = numeric()),
+  cluster = list(U = numeric(), V = numeric()),
+  random  = list(U = numeric(), V = numeric())
+)
+auc_list.lambda2 <- list(
+  hub     = list(U = numeric(), V = numeric()),
+  cluster = list(U = numeric(), V = numeric()),
+  random  = list(U = numeric(), V = numeric())
+)
+
+load(sprintf("./%s/%s_result/data%02d_result.%s.RData", input_dir, "hub", 1, "U"))
+load(sprintf("./%s/%s_bic/data%02d.%s.RData", input_dir, type, idx, label)) 
 
 for (type in unique(task_list$type)) {
   for (idx in setdiff(1:50, exclude_idx)) {
     
-    ## true 값
+    # true 값값
     load(sprintf("./%s_data/data%02d.RData", type, idx))
-    
-    ## U
-    load(sprintf("./%s_result/data%02d_result.U.RData", type, idx))
-    load(sprintf("./%s_bic/data%02d.U.RData", type, idx))  # test_bic.U
-    out_file_U <- sprintf("./plot1.ROC_curve/%s_data%02d.U.png", type, idx)
-    auc_U <- plot_roc(sim_result_U, result$U_inv, lambda_seq,
-                      main_title = sprintf("%s | data%02d (U)", type, idx),
-                      out_file = out_file_U,
-                      test_bic = test_bic.U)
-    
-    ## V
-    load(sprintf("./%s_result/data%02d_result.V.RData", type, idx))
-    load(sprintf("./%s_bic/data%02d.V.RData", type, idx))  # test_bic.V
-    out_file_V <- sprintf("./plot1.ROC_curve/%s_data%02d.V.png", type, idx)
-    auc_V <- plot_roc(sim_result_V, result$V_inv, lambda_seq,
-                      main_title = sprintf("%s | data%02d (V)", type, idx),
-                      out_file = out_file_V,
-                      test_bic = test_bic.V)
-    
-    cat(sprintf("Saved ROC plots: %s data%02d | AUC(U)=%.3f, AUC(V)=%.3f\n",
-                type, idx, auc_U, auc_V))
+    for (label in c("U", "V")) {
+      # lambda_seq <- if (label == "U") lambda_list.Y_t[[type]][, idx] else lambda_list.Y[[type]][, idx]
+      
+      load(sprintf("./%s/%s_result/data%02d_result.%s.RData", input_dir, type, idx, label))
+      load(sprintf("./%s/%s_bic/data%02d.%s.RData", input_dir, type, idx, label)) 
+      # sim_result 객체 선택 (sim_result_U / sim_result_V)
+      sim_result <- get(sprintf("sim_result_%s", label))
+      lambda_seq <- names(sim_result)
+      
+      # test_bic 객체 선택 (test_bic.U / test_bic.V)
+      test_bic <- get(sprintf("test_bic.%s", label))
+      
+      # true inverse matrix 선택
+      rho_true <- if (label == "U") result$U_inv else result$V_inv
+      
+      out_file <- sprintf("./%s/plot.ROC_curve/%s_data%02d.%s.png", input_dir, type, idx, label)
+      auc <- plot_roc(sim_result,
+                      rho_true,
+                      lambda_seq,
+                      main_title = sprintf("%s | data%02d (%s)", type, idx, label),
+                      out_file   = out_file,
+                      test_bic   = test_bic)
+      
+      # === AUC 저장 ===
+      auc_list.lambda2[[type]][[label]] <- c(auc_list.lambda2[[type]][[label]], auc)
+      
+      cat(sprintf("Saved ROC plots: %s data%02d | AUC(%s)=%.3f\n",
+                  type, idx, label, auc))
+    }
   }
 }
+lambda_list.Y$random[, 1]
+load(sprintf("./%s/%s_result/data%02d_result.%s.RData", input_dir, "random", 1, "V"))
+names(sim_result_V)
+
+for (type in unique(task_list$type)) {
+  for (idx in setdiff(1:50, exclude_idx)) {
+    
+    # true 값값
+    load(sprintf("./%s_data/data%02d.RData", type, idx))
+    for (label in c("U", "V")) {
+      lambda_seq <- if (label == "U") lambda_list.Y_t[[type]][, idx] else lambda_list.Y[[type]][, idx]
+      
+      load(sprintf("./%s/%s_result/data%02d_result.%s.RData", input_dir, type, idx, label))
+      load(sprintf("./%s/%s_bic/data%02d.%s.RData", input_dir, type, idx, label)) 
+      # sim_result 객체 선택 (sim_result_U / sim_result_V)
+      sim_result <- get(sprintf("sim_result_%s", label))
+      
+      # test_bic 객체 선택 (test_bic.U / test_bic.V)
+      test_bic <- get(sprintf("test_bic.%s", label))
+      
+      # true inverse matrix 선택
+      rho_true <- if (label == "U") result$U_inv else result$V_inv
+      
+      out_file <- sprintf("./%s/plot.ROC_curve/%s_data%02d.%s.png", input_dir, type, idx, label)
+      auc <- plot_roc(sim_result,
+                      rho_true,
+                      lambda_seq,
+                      main_title = sprintf("%s | data%02d (%s)", type, idx, label),
+                      out_file   = out_file,
+                      test_bic   = test_bic)
+      
+      cat(sprintf("Saved ROC plots: %s data%02d | AUC(%s)=%.3f\n",
+                  type, idx, label, auc))
+    }
+  }
+}
+
+
+
+
+
+
+which.min(auc_list.lambda1$cluster$V)
+which.max(auc_list.lambda1$cluster$V)
